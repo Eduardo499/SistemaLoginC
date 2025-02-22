@@ -1,0 +1,49 @@
+# Compilados e binários
+*.o
+*.out
+*.exe
+servidor
+
+# Logs e arquivos temporários
+*.log
+*.tmp
+*.swp
+*.pid
+*.seed
+*.bak
+*.old
+*.orig
+
+# Arquivos gerados pelo sistema
+.DS_Store
+Thumbs.db
+
+# Pastas de build e cache
+build/
+dist/
+cache/
+*.dSYM
+
+# Bibliotecas e dependências
+*.so
+*.dll
+*.dylib
+*.a
+
+# Outros arquivos desnecessários
+*.~ 
+*.gz
+*.zip
+*.tar
+*.tar.gz
+
+# IDEs e editores de texto
+.vscode/
+.idea/
+*.code-workspace
+*.sublime-project
+*.sublime-workspace
+
+# Arquivos de execução do servidor
+public/*.tmp
+public/*.log
