@@ -114,6 +114,64 @@ int register_user(const char *username, const char *password) {
     return result;
 }
 
+// Função auxiliar para substituir o marcador de posição pelo nome do usuário
+char *replace_placeholder(const char *html, const char *username) {
+    const char *placeholder = "{{username}}";
+    char *result;
+    int len_html = strlen(html);
+    int len_placeholder = strlen(placeholder);
+    int len_username = strlen(username);
+
+    result = malloc(len_html - len_placeholder + len_username + 1);
+    if (!result) {
+        perror("Erro ao alocar memória");
+        return NULL;
+    }
+
+    char *pos = strstr(html, placeholder);
+    if (pos) {
+        int prefix_len = pos - html;
+        strncpy(result, html, prefix_len);
+        strcpy(result + prefix_len, username);
+        strcpy(result + prefix_len + len_username, pos + len_placeholder);
+    } else {
+        strcpy(result, html);
+    }
+
+    return result;
+}
+
+// Função para buscar o nome do usuário no banco de dados
+char *get_username_from_db(const char *username) {
+    sqlite3 *db;
+    sqlite3_stmt *stmt;
+    char *result = NULL;
+
+    if (sqlite3_open(DB_PATH, &db) != SQLITE_OK) {
+        fprintf(stderr, "Erro ao abrir o banco de dados: %s\n", sqlite3_errmsg(db));
+        return NULL;
+    }
+
+    const char *sql = "SELECT username FROM users WHERE username = ?";
+    if (sqlite3_prepare_v2(db, sql, -1, &stmt, NULL) != SQLITE_OK) {
+        fprintf(stderr, "Erro ao preparar a consulta: %s\n", sqlite3_errmsg(db));
+        sqlite3_close(db);
+        return NULL;
+    }
+
+    sqlite3_bind_text(stmt, 1, username, -1, SQLITE_STATIC);
+
+    if (sqlite3_step(stmt) == SQLITE_ROW) {
+        const unsigned char *db_username = sqlite3_column_text(stmt, 0);
+        result = strdup((const char *)db_username);
+    }
+
+    sqlite3_finalize(stmt);
+    sqlite3_close(db);
+
+    return result;
+}
+
 // Função para tratar requisições HTTP
 void handle_request(int new_socket, char *request) {
     char response[BUFFER_SIZE];
@@ -247,6 +305,15 @@ void handle_request(int new_socket, char *request) {
                 printf("Erro ao ler o arquivo index.html\n");
             } else {
                 printf("Arquivo index.html lido com sucesso\n");
+                // Busca o nome do usuário no banco de dados
+                char *db_username = get_username_from_db(username);
+                if (db_username) {
+                    // Substitui o marcador de posição pelo nome do usuário
+                    char *final_content = replace_placeholder(html_content, db_username);
+                    free(html_content);
+                    html_content = final_content;
+                    free(db_username);
+                }
             }
         } else {
             html_content = read_file("public/login.html");
