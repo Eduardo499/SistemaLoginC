@@ -54,10 +54,31 @@ void handle_request(int new_socket, char *request) {
                      "Set-Cookie: session=valid; Path=/; HttpOnly\r\n"
                      "Location: /\r\n\r\n");
         } else {
-            snprintf(response, sizeof(response),
-                     "HTTP/1.1 401 Unauthorized\r\n"
-                     "Content-Type: text/html\r\n\r\n"
-                     "<h1>Credenciais Inválidas</h1>");
+            html_content = read_file("public/login.html");
+            if (!html_content) {
+                snprintf(response, sizeof(response),
+                         "HTTP/1.1 500 Internal Server Error\r\n"
+                         "Content-Type: text/html\r\n\r\n"
+                         "<h1>Erro ao carregar a página de login</h1>");
+            } else {
+                char error_message[] = "<p style='color:red;'>Credenciais Inválidas</p>";
+                char *error_page = malloc(strlen(html_content) + strlen(error_message) + 1);
+                if (error_page) {
+                    strcpy(error_page, html_content);
+                    strcat(error_page, error_message);
+                    snprintf(response, sizeof(response),
+                             "HTTP/1.1 401 Unauthorized\r\n"
+                             "Content-Type: text/html\r\n\r\n%s",
+                             error_page);
+                    free(error_page);
+                } else {
+                    snprintf(response, sizeof(response),
+                             "HTTP/1.1 500 Internal Server Error\r\n"
+                             "Content-Type: text/html\r\n\r\n"
+                             "<h1>Erro ao alocar memória</h1>");
+                }
+                free(html_content);
+            }
         }
         send(new_socket, response, strlen(response), 0);
         close(new_socket);
