@@ -88,8 +88,8 @@ int register_user(const char *username, const char *password) {
         return 0;
     }
 
-    // Prepara a consulta SQL para inserir um novo usuário
-    const char *sql = "INSERT INTO users (username, password) VALUES (?, ?)";
+    // Prepara a consulta SQL para inserir um novo usuário com is_superuser = 0
+    const char *sql = "INSERT INTO users (username, password, is_superuser) VALUES (?, ?, 0)";
     if (sqlite3_prepare_v2(db, sql, -1, &stmt, NULL) != SQLITE_OK) {
         fprintf(stderr, "Erro ao preparar a consulta: %s\n", sqlite3_errmsg(db));
         sqlite3_close(db);
@@ -114,15 +114,17 @@ int register_user(const char *username, const char *password) {
     return result;
 }
 
-// Função auxiliar para substituir o marcador de posição pelo nome do usuário
-char *replace_placeholder(const char *html, const char *username) {
+// Função auxiliar para substituir o marcador de posição pelo nome do usuário e mensagem de super usuário
+char *replace_placeholder(const char *html, const char *username, int is_superuser) {
     const char *placeholder = "{{username}}";
+    const char *superuser_message = "<p>Você é um super usuário :)</p>";
     char *result;
     int len_html = strlen(html);
     int len_placeholder = strlen(placeholder);
     int len_username = strlen(username);
+    int len_superuser_message = is_superuser ? strlen(superuser_message) : 0;
 
-    result = malloc(len_html - len_placeholder + len_username + 1);
+    result = malloc(len_html - len_placeholder + len_username + len_superuser_message + 1);
     if (!result) {
         perror("Erro ao alocar memória");
         return NULL;
@@ -134,6 +136,9 @@ char *replace_placeholder(const char *html, const char *username) {
         strncpy(result, html, prefix_len);
         strcpy(result + prefix_len, username);
         strcpy(result + prefix_len + len_username, pos + len_placeholder);
+        if (is_superuser) {
+            strcat(result, superuser_message);
+        }
     } else {
         strcpy(result, html);
     }
@@ -172,11 +177,46 @@ char *get_username_from_db(const char *username) {
     return result;
 }
 
+// Função para buscar o nome do usuário e se é super usuário no banco de dados
+int get_user_info_from_db(const char *username, char *db_username, int *is_superuser) {
+    sqlite3 *db;
+    sqlite3_stmt *stmt;
+    int result = 0;
+
+    if (sqlite3_open(DB_PATH, &db) != SQLITE_OK) {
+        fprintf(stderr, "Erro ao abrir o banco de dados: %s\n", sqlite3_errmsg(db));
+        return 0;
+    }
+
+    const char *sql = "SELECT username, is_superuser FROM users WHERE username = ?";
+    if (sqlite3_prepare_v2(db, sql, -1, &stmt, NULL) != SQLITE_OK) {
+        fprintf(stderr, "Erro ao preparar a consulta: %s\n", sqlite3_errmsg(db));
+        sqlite3_close(db);
+        return 0;
+    }
+
+    sqlite3_bind_text(stmt, 1, username, -1, SQLITE_STATIC);
+
+    if (sqlite3_step(stmt) == SQLITE_ROW) {
+        const unsigned char *db_username_text = sqlite3_column_text(stmt, 0);
+        *is_superuser = sqlite3_column_int(stmt, 1);
+        strcpy(db_username, (const char *)db_username_text);
+        result = 1;
+    }
+
+    sqlite3_finalize(stmt);
+    sqlite3_close(db);
+
+    return result;
+}
+
 // Função para tratar requisições HTTP
 void handle_request(int new_socket, char *request) {
     char response[BUFFER_SIZE];
     char *html_content;
     char username[50], password[50];
+    char db_username[50];
+    int is_superuser = 0;
 
     if (strstr(request, "POST /login") != NULL) {
         // Extrai o username e password da requisição
@@ -305,14 +345,12 @@ void handle_request(int new_socket, char *request) {
                 printf("Erro ao ler o arquivo index.html\n");
             } else {
                 printf("Arquivo index.html lido com sucesso\n");
-                // Busca o nome do usuário no banco de dados
-                char *db_username = get_username_from_db(username);
-                if (db_username) {
-                    // Substitui o marcador de posição pelo nome do usuário
-                    char *final_content = replace_placeholder(html_content, db_username);
+                // Busca o nome do usuário e se é super usuário no banco de dados
+                if (get_user_info_from_db(username, db_username, &is_superuser)) {
+                    // Substitui o marcador de posição pelo nome do usuário e mensagem de super usuário
+                    char *final_content = replace_placeholder(html_content, db_username, is_superuser);
                     free(html_content);
                     html_content = final_content;
-                    free(db_username);
                 }
             }
         } else {
