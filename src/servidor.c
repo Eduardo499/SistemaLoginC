@@ -3,9 +3,11 @@
 #include <string.h>
 #include <unistd.h>
 #include <arpa/inet.h>
+#include <sqlite3.h>
 
 #define PORT 8080
 #define BUFFER_SIZE 4096
+#define DB_PATH "usuarios.db"
 
 // Credenciais fixas para exemplo
 const char *VALID_USER = "admin";
@@ -42,13 +44,57 @@ int is_logged_in(char *request) {
     return strstr(request, "Cookie: session=valid") != NULL;
 }
 
+// Função para verificar credenciais no banco de dados
+int check_credentials(const char *username, const char *password) {
+    sqlite3 *db;
+    sqlite3_stmt *stmt;
+    int result = 0;
+
+    // Abre o banco de dados
+    if (sqlite3_open(DB_PATH, &db) != SQLITE_OK) {
+        fprintf(stderr, "Erro ao abrir o banco de dados: %s\n", sqlite3_errmsg(db));
+        return 0;
+    }
+
+    // Prepara a consulta SQL para verificar o usuário e a senha
+    const char *sql = "SELECT 1 FROM users WHERE username = ? AND password = ?";
+    if (sqlite3_prepare_v2(db, sql, -1, &stmt, NULL) != SQLITE_OK) {
+        fprintf(stderr, "Erro ao preparar a consulta: %s\n", sqlite3_errmsg(db));
+        sqlite3_close(db);
+        return 0;
+    }
+
+    // Vincula os parâmetros da consulta para evitar SQL Injection
+    sqlite3_bind_text(stmt, 1, username, -1, SQLITE_STATIC);
+    sqlite3_bind_text(stmt, 2, password, -1, SQLITE_STATIC);
+
+    // Executa a consulta e verifica se retornou algum resultado
+    if (sqlite3_step(stmt) == SQLITE_ROW) {
+        result = 1; // Credenciais válidas
+    }
+
+    // Limpa os recursos
+    sqlite3_finalize(stmt);
+    sqlite3_close(db);
+
+    return result;
+}
+
 // Função para tratar requisições HTTP
 void handle_request(int new_socket, char *request) {
     char response[BUFFER_SIZE];
     char *html_content;
+    char username[50], password[50];
 
     if (strstr(request, "POST /login") != NULL) {
-        if (strstr(request, "username=admin") && strstr(request, "password=1234")) {
+        // Extrai o username e password da requisição
+        char *body = strstr(request, "\r\n\r\n");
+        if (body) {
+            body += 4; // Skip the "\r\n\r\n"
+            sscanf(body, "username=%49[^&]&password=%49s", username, password);
+        }
+
+        if (check_credentials(username, password)) {
             snprintf(response, sizeof(response),
                      "HTTP/1.1 302 Found\r\n"
                      "Set-Cookie: session=valid; Path=/; HttpOnly\r\n"
