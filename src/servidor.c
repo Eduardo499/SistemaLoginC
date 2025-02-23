@@ -9,10 +9,6 @@
 #define BUFFER_SIZE 4096
 #define DB_PATH "usuarios.db"
 
-// Credenciais fixas para exemplo
-const char *VALID_USER = "admin";
-const char *VALID_PASS = "1234";
-
 // Função para ler o conteúdo do arquivo HTML
 char *read_file(const char *filename) {
     FILE *file = fopen(filename, "r");
@@ -80,6 +76,44 @@ int check_credentials(const char *username, const char *password) {
     return result;
 }
 
+// Função para registrar um novo usuário no banco de dados
+int register_user(const char *username, const char *password) {
+    sqlite3 *db;
+    sqlite3_stmt *stmt;
+    int result = 0;
+
+    // Abre o banco de dados
+    if (sqlite3_open(DB_PATH, &db) != SQLITE_OK) {
+        fprintf(stderr, "Erro ao abrir o banco de dados: %s\n", sqlite3_errmsg(db));
+        return 0;
+    }
+
+    // Prepara a consulta SQL para inserir um novo usuário
+    const char *sql = "INSERT INTO users (username, password) VALUES (?, ?)";
+    if (sqlite3_prepare_v2(db, sql, -1, &stmt, NULL) != SQLITE_OK) {
+        fprintf(stderr, "Erro ao preparar a consulta: %s\n", sqlite3_errmsg(db));
+        sqlite3_close(db);
+        return 0;
+    }
+
+    // Vincula os parâmetros da consulta para evitar SQL Injection
+    sqlite3_bind_text(stmt, 1, username, -1, SQLITE_STATIC);
+    sqlite3_bind_text(stmt, 2, password, -1, SQLITE_STATIC);
+
+    // Executa a consulta e verifica se foi bem-sucedida
+    if (sqlite3_step(stmt) == SQLITE_DONE) {
+        result = 1; // Registro bem-sucedido
+    } else {
+        fprintf(stderr, "Erro ao registrar o usuário: %s\n", sqlite3_errmsg(db));
+    }
+
+    // Limpa os recursos
+    sqlite3_finalize(stmt);
+    sqlite3_close(db);
+
+    return result;
+}
+
 // Função para tratar requisições HTTP
 void handle_request(int new_socket, char *request) {
     char response[BUFFER_SIZE];
@@ -132,10 +166,78 @@ void handle_request(int new_socket, char *request) {
     } else if (strstr(request, "POST /logout") != NULL) {
         // Realiza o logout ao limpar o cookie de sessão
         snprintf(response, sizeof(response),
-         "HTTP/1.1 302 Found\r\n"
-         "Set-Cookie: session=deleted; Path=/; Expires=Thu, 01 Jan 1970 00:00:00 GMT\r\n"
-         "Location: /\r\n\r\n");
+                 "HTTP/1.1 302 Found\r\n"
+                 "Set-Cookie: session=deleted; Path=/; Expires=Thu, 01 Jan 1970 00:00:00 GMT\r\n"
+                 "Location: /\r\n\r\n");
         send(new_socket, response, strlen(response), 0);
+        close(new_socket);
+        return;
+    } else if (strstr(request, "POST /registrar_usuario") != NULL) {
+        // Extrai o username e password da requisição
+        char *body = strstr(request, "\r\n\r\n");
+        if (body) {
+            body += 4; // Skip the "\r\n\r\n"
+            sscanf(body, "username=%49[^&]&password=%49s", username, password);
+        }
+
+        if (register_user(username, password)) {
+            snprintf(response, sizeof(response),
+                     "HTTP/1.1 302 Found\r\n"
+                     "Location: /login\r\n\r\n");
+        } else {
+            html_content = read_file("public/registrar.html");
+            if (!html_content) {
+                snprintf(response, sizeof(response),
+                         "HTTP/1.1 500 Internal Server Error\r\n"
+                         "Content-Type: text/html\r\n\r\n"
+                         "<h1>Erro ao carregar a página de registro</h1>");
+            } else {
+                char error_message[] = "<p style='color:red;'>Erro ao registrar o usuário</p>";
+                char *error_page = malloc(strlen(html_content) + strlen(error_message) + 1);
+                if (error_page) {
+                    strcpy(error_page, html_content);
+                    strcat(error_page, error_message);
+                    snprintf(response, sizeof(response),
+                             "HTTP/1.1 400 Bad Request\r\n"
+                             "Content-Type: text/html\r\n\r\n%s",
+                             error_page);
+                    free(error_page);
+                } else {
+                    snprintf(response, sizeof(response),
+                             "HTTP/1.1 500 Internal Server Error\r\n"
+                             "Content-Type: text/html\r\n\r\n"
+                             "<h1>Erro ao alocar memória</h1>");
+                }
+                free(html_content);
+            }
+        }
+        send(new_socket, response, strlen(response), 0);
+        close(new_socket);
+        return;
+    } else if (strstr(request, "POST /registrar") != NULL) {
+        // Tenta ler o arquivo HTML
+        html_content = read_file("public/registrar.html");
+        
+        if (!html_content) {
+            // Se falhar ao ler o arquivo, responde com erro 500
+            snprintf(response, sizeof(response),
+                     "HTTP/1.1 500 Internal Server Error\r\n"
+                     "Content-Type: text/html\r\n\r\n"
+                     "<h1>Erro ao carregar a página de registro</h1>");
+        } else {
+            // Se o arquivo for lido corretamente, responde com o conteúdo
+            snprintf(response, sizeof(response),
+                     "HTTP/1.1 200 OK\r\n"
+                     "Content-Type: text/html\r\n"
+                     "Content-Length: %ld\r\n\r\n%s",
+                     strlen(html_content), html_content);
+            free(html_content); // Libera o conteúdo do HTML após o envio
+        }
+    
+        // Envia a resposta para o cliente
+        send(new_socket, response, strlen(response), 0);
+    
+        // Fecha a conexão após o envio
         close(new_socket);
         return;
     } else if (strstr(request, "GET /") != NULL) {
