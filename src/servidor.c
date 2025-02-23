@@ -39,7 +39,6 @@ char *read_file(const char *filename) {
 
 // Função para verificar se o usuário está logado
 int is_logged_in(char *request) {
-    // Verifica se o cookie de sessão está presente na requisição
     return strstr(request, "Cookie: session=valid") != NULL;
 }
 
@@ -49,11 +48,10 @@ void handle_request(int new_socket, char *request) {
     char *html_content;
 
     if (strstr(request, "POST /login") != NULL) {
-        // Verifica credenciais na requisição
         if (strstr(request, "username=admin") && strstr(request, "password=1234")) {
             snprintf(response, sizeof(response),
                      "HTTP/1.1 302 Found\r\n"
-                     "Set-Cookie: session=valid\r\n"
+                     "Set-Cookie: session=valid; Path=/; HttpOnly\r\n"
                      "Location: /\r\n\r\n");
         } else {
             snprintf(response, sizeof(response),
@@ -61,12 +59,33 @@ void handle_request(int new_socket, char *request) {
                      "Content-Type: text/html\r\n\r\n"
                      "<h1>Credenciais Inválidas</h1>");
         }
+        send(new_socket, response, strlen(response), 0);
+        close(new_socket);
+        return;
+    } else if (strstr(request, "POST /logout") != NULL) {
+        // Realiza o logout ao limpar o cookie de sessão
+        snprintf(response, sizeof(response),
+         "HTTP/1.1 302 Found\r\n"
+         "Set-Cookie: session=deleted; Path=/; Expires=Thu, 01 Jan 1970 00:00:00 GMT\r\n"
+         "Location: /\r\n\r\n");
+        send(new_socket, response, strlen(response), 0);
+        close(new_socket);
+        return;
     } else if (strstr(request, "GET /") != NULL) {
-        // Redireciona para login se não estiver logado
         if (is_logged_in(request)) {
             html_content = read_file("public/index.html");
+            if (!html_content) {
+                printf("Erro ao ler o arquivo index.html\n");
+            } else {
+                printf("Arquivo index.html lido com sucesso\n");
+            }
         } else {
             html_content = read_file("public/login.html");
+            if (!html_content) {
+                printf("Erro ao ler o arquivo login.html\n");
+            } else {
+                printf("Arquivo login.html lido com sucesso\n");
+            }
         }
 
         if (html_content) {
@@ -110,23 +129,34 @@ int main(void) {
 
     if (bind(server_fd, (struct sockaddr *)&address, sizeof(address)) < 0) {
         perror("Erro no bind");
-        close(server_fd);  // Fechar o socket antes de sair
+        close(server_fd);
         exit(EXIT_FAILURE);
     }
 
     if (listen(server_fd, 3) < 0) {
         perror("Erro no listen");
-        close(server_fd);  // Fechar o socket antes de sair
+        close(server_fd);
         exit(EXIT_FAILURE);
     }
 
     printf("Servidor escutando na porta %d\n", PORT);
+
+    #ifdef __linux__
     system("xdg-open http://localhost:8080 &");
+    #endif
+
+    #ifdef __APPLE__
+    system("open http://localhost:8080");
+    #endif
+
+    #ifdef _WIN32
+    system("start http://localhost:8080");
+    #endif
 
     while (1) {
         if ((new_socket = accept(server_fd, (struct sockaddr *)&address, (socklen_t *)&addrlen)) < 0) {
             perror("Erro no accept");
-            close(server_fd);  // Fechar o socket antes de sair
+            close(server_fd);
             exit(EXIT_FAILURE);
         }
 
@@ -134,7 +164,7 @@ int main(void) {
         printf("Requisição recebida:\n%s\n", buffer);
 
         handle_request(new_socket, buffer);
-        memset(buffer, 0, BUFFER_SIZE);  // Limpar o buffer após cada requisição
+        memset(buffer, 0, BUFFER_SIZE);
     }
 
     close(server_fd);
